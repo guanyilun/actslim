@@ -16,7 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14]
+        # macos-14 = Apple Silicon (arm64). macos-13 (Intel) runners are scarce
+        # and can queue indefinitely; Intel-Mac users can build from the sdist.
+        os: [ubuntu-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
 
