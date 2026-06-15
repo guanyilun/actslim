@@ -37,20 +37,47 @@ published to PyPI on a `v*` tag via Trusted Publishing (see
 
 ## Use
 
+### Detector timeseries as an `(ndet, nsample)` array
+
 ```python
 import actslim
 
-# All detector channels as one (n_chan, n_samp) array (fastest):
-channels, data = actslim.read_zip_array("1572374891.1572382965.ar6.zip")
+dets, data = actslim.read_zip_array("1572374891.1572382965.ar6.zip")
+# dets: list of 1760 channel names; data: (1760, 259864) int32
+```
 
-# Or a dict {channel: ndarray}, optionally a subset:
-tod = actslim.read_zip("....zip", channels=["tesdatar00c01", "tesdatar00c02"])
+### A full TOD object (detectors + pointing)
 
-# Unzipped dirfile directory:
-tod = actslim.read_dirfile("/path/to/dirfile")
+```python
+tod = actslim.read_tod("1572374891.1572382965.ar6.zip")
 
-# Low level:
-raw = actslim.decompress(open("tesdatar00c01.slm","rb").read())   # bytes
+tod.data        # (ndet, nsample) int32 detector array  (alias: tod.signal)
+tod.det_uid     # integer detector indices
+tod.az          # boresight azimuth,  radians  (n_sample)
+tod.alt         # boresight altitude, radians  (n_sample)
+tod.ctime       # unix timestamp,     seconds  (n_sample)
+tod.enc_flags   # encoder validity flags
+tod["tesdatar00c01"]          # one detector row by name
+tod = actslim.read_tod("....zip", aux=["enc_status", "data_rate"])  # extra channels
+```
+
+`TOD` is a plain dataclass of numpy arrays + metadata (modelled on moby2's TOD),
+so it is trivial to convert/wrap for other frameworks. `az`/`alt`/`ctime` are
+derived from the dirfile's LINCOM fields (`Enc_Az_Deg`, `Enc_El_Deg`, `C_Time`)
+automatically.
+
+### Lower level
+
+```python
+# dict {channel: ndarray}, optional subset:
+d = actslim.read_zip("....zip", channels=["tesdatar00c01", "az", "el"])
+
+# resolve RAW or derived (LINCOM) fields by name -> {name: ndarray}:
+p = actslim.read_fields("....zip", ["Enc_Az_Deg", "Enc_El_Deg", "C_Time"])
+
+# unzipped dirfile directory, or raw bytes:
+d = actslim.read_dirfile("/path/to/dirfile")
+raw = actslim.decompress(open("tesdatar00c01.slm", "rb").read())
 ```
 
 `workers=N` controls decode threads (default: all cores; `decompress` releases

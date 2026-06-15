@@ -24,8 +24,8 @@ import numpy as np
 from ._actslim import decompress, decompress_many, decompress_into
 
 __all__ = ["decompress", "decompress_many", "decompress_into", "read_zip",
-           "read_dirfile", "parse_format", "FORMAT_DTYPES", "read_zip_array",
-           "TOD", "read_tod"]
+           "read_dirfile", "read_zip_array", "read_fields", "parse_format",
+           "parse_lincom", "FORMAT_DTYPES", "TOD", "read_tod"]
 
 # dirfile RAW type code -> numpy dtype.  Authoritative source: libactpol
 # getdata.c (sizes at lines 337-347, signedness at 824-855):
@@ -63,6 +63,32 @@ def parse_format(text):
                 continue
             fields[name] = (spf, dt)
     return fields
+
+
+def parse_lincom(text):
+    """Parse LINCOM (derived) fields from a dirfile ``format`` file.
+
+    Returns ``{name: [(in_field, scale, offset), ...]}``.  A LINCOM field is
+    ``sum_i (scale_i * in_field_i + offset_i)`` -- this is how the dirfile
+    encodes e.g. encoder counts -> degrees and cpu_s/cpu_us -> ctime.
+    """
+    out = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        parts = line.split()
+        if len(parts) >= 3 and parts[1].upper() == "LINCOM":
+            try:
+                nterm = int(parts[2])
+                terms = []
+                for k in range(nterm):
+                    f = parts[3 + 3 * k]
+                    m = float(parts[4 + 3 * k])
+                    b = float(parts[5 + 3 * k])
+                    terms.append((f, m, b))
+            except (ValueError, IndexError):
+                continue
+            out[parts[0]] = terms
+    return out
 
 
 _LFH = struct.Struct("<IHHHHHIIIHH")  # local file header (zip spec, 30 bytes)
@@ -224,6 +250,60 @@ def read_zip_array(path, channels=None, fields=None, workers=None):
                 "read_zip_array requires a single dtype across channels")
         arr = _decode_uniform(payloads, dtypes.pop(), int(workers))
     return channels, arr
+
+
+def read_fields(path, names, workers=None):
+    """Read fields by name, resolving RAW channels and LINCOM derived fields.
+
+    ``names`` may include derived fields such as ``"Enc_Az_Deg"`` or
+    ``"C_Time"``; their LINCOM definitions in the dirfile ``format`` are applied
+    automatically (returned as float64).  RAW fields are returned at native
+    dtype.  Missing fields are omitted from the result.
+
+    Returns ``dict[str, numpy.ndarray]``.
+    """
+    if workers is None:
+        workers = 0
+    with zipfile.ZipFile(path) as z:
+        names_in = set(z.namelist())
+        text = z.read("format").decode("latin-1") if "format" in names_in else ""
+    raw_fmt = parse_format(text)
+    lincom = parse_lincom(text)
+
+    # Figure out which RAW channels we actually need to decode.
+    need = set()
+    plan = {}  # requested name -> ("raw", ch) or ("lincom", terms)
+    for nm in names:
+        if nm in raw_fmt:
+            plan[nm] = ("raw", nm)
+            need.add(nm)
+        elif nm in lincom:
+            plan[nm] = ("lincom", lincom[nm])
+            for f, _, _ in lincom[nm]:
+                if f in raw_fmt:
+                    need.add(f)
+    need = [c for c in need]
+    if not need:
+        return {}
+
+    raw = read_zip(path, channels=need, fields=raw_fmt, workers=workers)
+
+    out = {}
+    for nm, (kind, spec) in plan.items():
+        if kind == "raw":
+            out[nm] = raw[spec]
+        else:
+            acc = None
+            ok = True
+            for f, m, b in spec:
+                if f not in raw:
+                    ok = False
+                    break
+                term = raw[f].astype(np.float64) * m + b
+                acc = term if acc is None else acc + term
+            if ok and acc is not None:
+                out[nm] = acc
+    return out
 
 
 def read_dirfile(path, channels=None):
