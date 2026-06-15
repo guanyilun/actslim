@@ -103,6 +103,37 @@ Comparable-to-better than the original, with none of the legacy dependencies.
 The single biggest real-world lever for the legacy reader — making sure
 `OMP_NUM_THREADS` is high — applies here too via `workers`.
 
+### Why it's faster than well-optimized legacy code
+
+We did **not** make slim decoding faster — both readers run the same codec at
+the same speed (~0.78 s for 1760 channels at 40 threads, measured head to head).
+The wins are entirely *around* the decode, by removing work the layered
+`libactpol → getdata → zzip` stack can't avoid without a rewrite:
+
+1. **No data copy in.** The legacy path reads each `.slm` through `zzip`, which
+   copies bytes out of the zip before slim sees them. We `mmap` the zip and let
+   slim decode *straight from the mapped file* (`fmemopen` over a memoryview
+   slice) — ~600 MB that used to be copied is never copied. This is only
+   possible because the zip is *Stored* (no deflate), so each `.slm` is a
+   contiguous slice of the file.
+2. **No CRC pass.** Python's `zipfile.read()` computes a CRC-32 over every entry
+   (~0.9 s serial on 600 MB). The mmap path skips it. (An earlier version that
+   used `zipfile.read()` was slower for exactly this reason.)
+3. **No per-channel allocation.** `decompress_into` decodes every channel into
+   one preallocated 2-D array. An earlier version that `malloc`'d per channel
+   plateaued at ~10 threads from glibc malloc-arena contention; decoding into
+   one array scales to all cores.
+
+Takeaway: "optimized" usually means the inner loop is fast. A layered design can
+still be slower than the sum of its tuned parts, because each layer boundary
+forces a copy.
+
+**Caveats.** These numbers are **warm cache** (data already in the page cache);
+cold from disk both readers are I/O-bound and roughly equal. mmap zero-copy
+shines on **local** filesystems — on a network FS with poor random access,
+staging the zip to `/dev/shm` first (the legacy `MOBY2_TOD_STAGING_PATH` trick)
+still helps and applies to both.
+
 ## Layout
 
 - `actslim/_actslim.cpp` — CPython extension: `decompress`, `decompress_many`,
