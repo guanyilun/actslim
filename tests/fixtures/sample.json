@@ -1,0 +1,7 @@
+{
+  "channel": "bbbox_cpu_s",
+  "dtype": "<u4",
+  "spf": 1,
+  "slm_bytes": 144,
+  "raw_bytes": 2600
+}
