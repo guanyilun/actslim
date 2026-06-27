@@ -68,3 +68,6 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Let re-runs after a transient Sigstore/upload failure succeed.
+          skip-existing: true
