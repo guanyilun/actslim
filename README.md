@@ -81,7 +81,9 @@ raw = actslim.decompress(open("tesdatar00c01.slm", "rb").read())
 ```
 
 `workers=N` controls decode threads (default: all cores; `decompress` releases
-the GIL and decoding runs in an internal C thread pool).
+the GIL and decoding runs in an internal C thread pool). `prefetch=True/False`
+forces the sequential read-ahead on or off (see *Cold reads* below); the default
+decides automatically.
 
 ## Correctness
 
@@ -128,11 +130,33 @@ Takeaway: "optimized" usually means the inner loop is fast. A layered design can
 still be slower than the sum of its tuned parts, because each layer boundary
 forces a copy.
 
-**Caveats.** These numbers are **warm cache** (data already in the page cache);
-cold from disk both readers are I/O-bound and roughly equal. mmap zero-copy
-shines on **local** filesystems — on a network FS with poor random access,
-staging the zip to `/dev/shm` first (the legacy `MOBY2_TOD_STAGING_PATH` trick)
-still helps and applies to both.
+These numbers are **warm cache** (data already in the page cache).
+
+### Cold reads
+
+From disk, reading is limited by I/O, and *how* the file is read matters more
+than the decoder. On a spinning-disk RAID (~455 MB/s sequential), median over
+random ~600 MB season 5–9 TODs, page cache evicted before each read:
+
+| reader | cold, per TOD | throughput |
+|---|---|---|
+| moby2 `DirfileManager.load_channels` | ~4.0 s | ~145 MB/s |
+| moby2 `instruments.actpol.get_tod` | ~3.5 s | ~160 MB/s |
+| `actslim.read_zip_array` v0.1 (mmap, random access) | ~3.0 s | ~200 MB/s |
+| `actslim.read_zip_array` (sequential prefetch) | **~1.5 s** | **~400 MB/s** |
+
+Two things made the random-access version slow: reading ~2000 local zip
+headers one by one (one seek each — ~3 s of a cold read), and 40 decode
+threads faulting mmap pages in at once, which the disk sees as random I/O.
+Now a background thread reads the zip front to back into the page cache, and
+channels are decoded in file order as soon as their bytes have arrived, so
+decoding overlaps with reading and the disk only ever sees one sequential
+stream. The prefetch is used automatically for dense reads (a full TOD). It is
+skipped for sparse subsets, which stay random access, and for files already in
+the page cache (checked with `mincore(2)`), where it would only add a copy.
+
+On a network FS with poor random access, staging the zip to `/dev/shm` first
+(the legacy `MOBY2_TOD_STAGING_PATH` trick) may still help.
 
 ## Layout
 

@@ -149,7 +149,7 @@ class TOD:
         return path
 
 
-def read_tod(path, dets=None, aux=(), pointing=True, workers=None):
+def read_tod(path, dets=None, aux=(), pointing=True, workers=None, prefetch=None):
     """Read an ACT slim zipped dirfile into a :class:`TOD`.
 
     Parameters
@@ -166,6 +166,9 @@ def read_tod(path, dets=None, aux=(), pointing=True, workers=None):
         and ``enc_flags`` from the dirfile's derived (LINCOM) fields when present.
     workers : int or None
         Decode threads (default: all cores).
+    prefetch : bool or None
+        Read the zip front to back while decoding the detector block (see
+        :func:`actslim.read_zip`).  ``None`` (default) decides automatically.
 
     Returns
     -------
@@ -187,7 +190,7 @@ def read_tod(path, dets=None, aux=(), pointing=True, workers=None):
             dets = sorted(c for c in slm if c.startswith("tesdata"))
 
     # Detector block: one preallocated (n_det, n_samp) array.
-    with _open_payloads(path, list(dets), fmt) as (dets, payloads, fmt):
+    with _open_payloads(path, list(dets), fmt, prefetch) as (dets, payloads, fmt):
         det_dtypes = {fmt.get(c, (1, np.int32))[1] for c in dets}
         if len(det_dtypes) != 1:
             raise ValueError("detector channels must share a single dtype")
