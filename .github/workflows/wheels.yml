@@ -32,6 +32,10 @@ jobs:
           CIBW_ARCHS_LINUX: x86_64
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           CIBW_TEST_REQUIRES: numpy
+          # Newer numpy (2.5+) ships no wheel installable in manylinux2014,
+          # and its sdist needs GCC >= 10.3. Force pip to pick the newest
+          # numpy that has a usable wheel when installing for the test.
+          CIBW_ENVIRONMENT_LINUX: PIP_ONLY_BINARY=numpy
           # Import smoke test (no data files in CI).
           CIBW_TEST_COMMAND: 'python -c "import actslim; print(actslim.__all__)"'
 
